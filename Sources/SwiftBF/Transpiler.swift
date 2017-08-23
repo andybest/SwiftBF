@@ -156,7 +156,17 @@ class SwiftBFTranspiler {
     
     
     init(source: String) {
-        let reader = BFReader(source: source)
+        // Clean the source of all non-opcode characters
+        var cleanedSource = ""
+        
+        let opcodeSet = CharacterSet(charactersIn: "+-<>,.[]")
+        for s in source.unicodeScalars {
+            if opcodeSet.contains(s) {
+                cleanedSource.append(Character(s))
+            }
+        }
+        
+        let reader = BFReader(source: cleanedSource)
         emitSource(reader.genAst())
         print(output)
     }
