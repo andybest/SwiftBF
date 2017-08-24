@@ -13,6 +13,7 @@ class BFCompiler {
     
     let module = Module(name: "main")
     var putcFunc: IRValue?
+    var getcFunc: IRValue?
     
     init(source: String) {
         // Clean the source of all non-opcode characters
@@ -29,6 +30,27 @@ class BFCompiler {
         let ast = reader.genAst()
         
         emitIR(ast)
+    }
+    
+    fileprivate func buildLoop(_ main: Function, _ loopCount: inout Int, _ builder: IRBuilder, _ memory: IRValue, _ dataPointer: IRValue, _ nodes: ([BfAstNode])) {
+        let loopHead = main.appendBasicBlock(named: "loop\(loopCount)")
+        let loopStart = main.appendBasicBlock(named: "loop\(loopCount)Start")
+        let loopEnd = main.appendBasicBlock(named: "loop\(loopCount)End")
+        loopCount += 1
+        
+        builder.buildBr(loopHead)
+        
+        builder.positionAtEnd(of: loopHead)
+        let memPtr = builder.buildInBoundsGEP(memory, indices: [IntType.int16.zero(), builder.buildLoad(dataPointer)])
+        let memVal = builder.buildLoad(memPtr)
+        let cond = builder.buildICmp(memVal, IntType.int8.zero(), IntPredicate.equal)
+        builder.buildCondBr(condition: cond, then: loopEnd, else: loopStart)
+        
+        builder.positionAtEnd(of: loopStart)
+        
+        irLoop(nodes, builder, memory, dataPointer, main, &loopCount)
+        builder.buildBr(loopHead)
+        builder.positionAtEnd(of: loopEnd)
     }
     
     fileprivate func irLoop(_ ast: [BfAstNode], _ builder: IRBuilder, _ memory: IRValue, _ dataPointer: IRValue, _ main: Function, _ loopCount: inout Int) {
@@ -49,30 +71,26 @@ class BFCompiler {
                 let tempVal = builder.buildSub(builder.buildLoad(dataPointer), IntType.int16.constant(val))
                 builder.buildStore(tempVal, to: dataPointer)
             case .loop(let nodes):
-                let loopHead = main.appendBasicBlock(named: "loop\(loopCount)")
-                let loopStart = main.appendBasicBlock(named: "loop\(loopCount)Start")
-                let loopEnd = main.appendBasicBlock(named: "loop\(loopCount)End")
-                loopCount += 1
-                
-                builder.buildBr(loopHead)
-                
-                builder.positionAtEnd(of: loopHead)
-                let memPtr = builder.buildInBoundsGEP(memory, indices: [IntType.int16.zero(), builder.buildLoad(dataPointer)])
-                let memVal = builder.buildLoad(memPtr)
-                let cond = builder.buildICmp(memVal, IntType.int8.zero(), IntPredicate.equal)
-                builder.buildCondBr(condition: cond, then: loopEnd, else: loopStart)
-                
-                builder.positionAtEnd(of: loopStart)
-                
-                irLoop(nodes, builder, memory, dataPointer, main, &loopCount)
-                builder.buildBr(loopHead)
-                builder.positionAtEnd(of: loopEnd)
+                if nodes.count == 1 {
+                    switch nodes[0] {
+                    case .add(_), .subtract(_):
+                        // A single add or subtract in a loop has the effect of zeroing the current memory location
+                        let memPtr = builder.buildInBoundsGEP(memory, indices: [IntType.int16.zero(), builder.buildLoad(dataPointer)])
+                        builder.buildStore(IntType.int8.zero(), to: memPtr)
+                        continue
+                    default:
+                        break
+                    }
+                }
+                buildLoop(main, &loopCount, builder, memory, dataPointer, nodes)
             case .outputChar:
                 let memPtr = builder.buildInBoundsGEP(memory, indices: [IntType.int16.zero(), builder.buildLoad(dataPointer)])
                 let charVal = builder.buildLoad(memPtr)
                 _ = builder.buildCall(putcFunc!, args: [charVal])
-            default:
-                break
+            case .getChar:
+                let memPtr = builder.buildInBoundsGEP(memory, indices: [IntType.int16.zero(), builder.buildLoad(dataPointer)])
+                let charVal = builder.buildCall(getcFunc!, args: [])
+                builder.buildStore(charVal, to: memPtr)
             }
         }
     }
@@ -97,10 +115,13 @@ class BFCompiler {
         
         let putcFuncSig = FunctionType(argTypes: [IntType.int8], returnType: VoidType())
         putcFunc = builder.addFunction("putchar", type: putcFuncSig)
+            
+        let getcFuncSig = FunctionType(argTypes: [], returnType: IntType.int8)
+        getcFunc = builder.addFunction("getchar", type: getcFuncSig)
 
         irLoop(ast, builder, memory, dataPointer, main, &loopCount)
         builder.buildRet(IntType.int64.constant(0))
-        module.dump()
+        //module.dump()
         
         //LLVMLinkInInterpreter()
 //        let jit = try! JIT(module: module, machine: TargetMachine())
@@ -108,7 +129,7 @@ class BFCompiler {
 //        _ = jit.runFunction(main, args: [])
         
         let passManager = FunctionPassManager(module: module)
-        passManager.add(.instructionCombining, .reassociate, .gvn, .cfgSimplification, .deadStoreElimination, .aggressiveDCE)
+        passManager.add(.instructionCombining, .reassociate, .cfgSimplification, .deadStoreElimination, .aggressiveDCE)
         passManager.run(on: main)
         
         let target = try! TargetMachine(triple: nil, cpu: "", features: "", optLevel: .aggressive, relocMode: .default, codeModel: .default)
