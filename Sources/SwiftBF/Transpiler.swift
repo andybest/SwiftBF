@@ -61,6 +61,10 @@ class BFReader {
                         ast.append(.add(255))
                         addVal = 0
                     }
+                    
+                    if source.index(after: sourceIndex) == source.endIndex {
+                        break
+                    }
                 }
                 
                 ast.append(.add(addVal))

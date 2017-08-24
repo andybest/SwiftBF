@@ -71,7 +71,11 @@ let src = """
 ..>+++++++++[<---------->-]<-----.---.+++.---.[-]<<<]
 """
 
-let bf = SwiftBFInterpreter(source: src)
-bf.run()
+//let src = "++++++++++[->++++++<]>++++."
 
-let bft = SwiftBFTranspiler(source: src)
+//let bf = SwiftBFInterpreter(source: src)
+//bf.run()
+
+//let bft = SwiftBFTranspiler(source: src)
+
+let bfc = BFCompiler(source: src)
